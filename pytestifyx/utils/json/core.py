@@ -2,24 +2,19 @@ import json
 
 
 def json_update(data, target_data: dict):
-    for key in list(target_data.keys()):
+    for key, value in list(target_data.items()):
         if key.startswith('@'):  # 如果key以@开头，则表示该key为替换报文中的key
-            path = key.split('@')[1].split('.')[:-1]  # 去掉@，分割path
-            name = key.split('@')[1].split('.')[-1]  # 取最后一个key
-            target_data[name] = target_data[key]  # 将替换报文中的key替换为目标报文中的key
-            target_data.pop(key)  # 删除分割前@字符 替换报文中的key
-            data_int = [int(i) if i.isdigit() else i for i in path]  # 处理列表数据，将path中的数字字符串转换为数字
-            data_sec = ''.join([str([i]) for i in data_int])  # 将数字字符串替换为数字后重新按照列表的形式拼接path
-            try:
-                data_res = eval('data' + data_sec)
-                update_allvalues(data_res, target_data)
-                target_data.pop(name)  # 删除分割后的替换报文中的key
-            except TypeError:
-                raise TypeError('请检查你的路径是否正确，列表元素需要用数字索引获取')
-            except KeyError:
-                raise TypeError('请检查你的路径是否正确，大概率是键名有误')
+            path = key[1:].split('.')  # 去掉@，分割path
+            current_data = data
+            for p in path[:-1]:  # 遍历到倒数第二个元素，定位到最终的字典
+                if p.isdigit():
+                    p = int(p)  # 如果是数字，转换为整数
+                current_data = current_data[p]
+            final_key = path[-1]
+            if final_key in current_data:
+                current_data[final_key] = value  # 只更新精确匹配的键
         else:
-            update_allvalues(data, target_data)
+            update_allvalues(data, {key: value})  # 对于非@开头的键，递归更新
 
 
 def update_allvalues(data, kw: dict):
@@ -36,9 +31,12 @@ def update_allvalues(data, kw: dict):
         return data
     elif isinstance(data, str):
         try:  # 兼容报文格式为序列化后的字典："{'name':'lyh'}"
-            d = eval(data)
-            if isinstance(d, dict):
-                return json.dumps(update_allvalues(d, kw))
+            if data.startswith('{') and data.endswith('}'):
+                d = eval(data)
+                if isinstance(d, dict):
+                    return json.dumps(update_allvalues(d, kw))
+                else:
+                    return data
             else:
                 return data
         except NameError:  # 未定义
@@ -61,3 +59,20 @@ def remove_keys(data, keys: list):
         for k, item in enumerate(data):
             data[k] = remove_keys(item, keys)
         return data
+
+
+if __name__ == '__main__':
+    param = {}
+    # param['@id'] = "1739669853902065661"
+    param['@graph.cells.0.id'] = "1739669853902065661"
+    data = {
+        "id": "1739669853902065666",
+        "graph": {
+            "graphName": "default",
+            "cells": [
+                {"id": "1739669853902065666"}
+            ]
+        }
+    }
+    json_update(data, param)
+    print(data)
