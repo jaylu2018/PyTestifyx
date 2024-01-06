@@ -204,8 +204,9 @@ class GenerateParametersHook(Hook):
                         path_params[key] = self.params['_url'][key]
                 for param, value in path_params.items():
                     self.context.url = self.context.url.replace('<' + param + '>', value)
-        if self.config.request_method.upper() + '_' + self.func_name + '_query_params' in self.params:  # 处理请求参数
-            self.context.query_params.update(self.params[self.config.request_method.upper() + '_' + self.func_name + '_query_params'])
+        for key, value in self.params.items():
+            if key in self.context.query_params:
+                self.context.query_params[key] = value
         # 处理请求头同名字段覆
         if self.config.is_cover_header:
             json_update(self.context.headers, self.context.data)  # 入参同名字段替换请求头
