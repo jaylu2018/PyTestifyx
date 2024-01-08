@@ -49,7 +49,13 @@ def get_template_value(template, func_name: str):
     if func_name.startswith(FUNC_NAME_PREFIX):
         func_name = func_name.replace(FUNC_NAME_PREFIX, '')
     try:
-        return template.__getattribute__(func_name) if hasattr(template, func_name) else {}
+        if hasattr(template, func_name):
+            if template.__getattribute__(func_name) is not None:
+                return template.__getattribute__(func_name)
+            else:
+                return {}
+        else:
+            return {}
     except AttributeError:
         log.warning(f'请配置{func_name}模版参数')
 
@@ -78,7 +84,7 @@ class BaseRequest:
 
         # 创建 HookedRequest 实例，所有钩子类将自动注册
         generate_parameters_hook_params = {"params": params, "context": context, "templates": templates, "func_name": func_name}
-        send_requests_hook_params = {"context": context}
+        send_requests_hook_params = {"context": context, "templates": templates, "func_name": func_name}
         hooks_params = [
             (GenerateParametersHook, generate_parameters_hook_params, 0),
             (SendRequestHook, send_requests_hook_params, 0),
@@ -233,9 +239,11 @@ class ConcurrentRequests:
 
 
 class SendRequestHook(Hook):
-    def __init__(self, config, context, priority=0):
+    def __init__(self, config, context, templates, func_name, priority=0):
         super().__init__(config, priority)
         self.context = context
+        self.templates = templates
+        self.func_name = func_name
         self.session = requests.Session()
         self.session.verify = False
 
@@ -283,7 +291,13 @@ class SendRequestHook(Hook):
                 self.context.data = m
             else:
                 raise Exception('暂不支持的Content-Type')
-        return self.session.request(request_method, self.context.url, headers=self.context.headers, params=self.context.query_params, data=self.context.data, timeout=30)
+        if self.func_name.startswith(FUNC_NAME_PREFIX):
+            self.func_name = self.func_name.replace(FUNC_NAME_PREFIX, '')
+        data = self.templates['body'].__getattribute__(request_method.upper() + '_' + self.func_name) if hasattr(self.templates['body'], request_method.upper() + '_' + self.func_name) else {}
+        if data is not None:
+            return self.session.request(request_method, self.context.url, headers=self.context.headers, params=self.context.query_params, data=self.context.data, timeout=30)
+        else:
+            return self.session.request(request_method, self.context.url, headers=self.context.headers, params=self.context.query_params, timeout=30)
 
     def handle_response(self, response):
         log.info(f'----------------接口的响应码：{response.status_code}')
