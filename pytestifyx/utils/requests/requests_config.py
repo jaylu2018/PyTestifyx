@@ -1,5 +1,5 @@
 import inspect
-
+from pytestifyx.utils.public.parse_config import parse_config
 
 class RequestConfig:
     is_cover_header = True  # 同名字段是否覆盖原有请求头
@@ -8,7 +8,7 @@ class RequestConfig:
     request_type = 'HTTP'  # 请求方式，HTTP/DUBBO/MQ
     request_method = 'POST'  # 请求方法，POST/GET
     content_type = 'json'  # 请求头Content-Type
-    is_json_dumps = False  # 是否对请求体进行json.dumps
+    is_json_dumps = True  # 是否对请求体进行json.dumps
     delete_key = []  # 删除请求参数中的某些字段
     concurrent_number = 1  # 并发数量
 
@@ -28,12 +28,8 @@ class SignConfig:
     sign_method = 'RSA'  # 加签方式，RSA/MD5/SHA256/SHA512
 
 
-class LoginConfig:
-    login_flag = False  # 是否登录
-
-
 class EnvConfig:
-    env_name = 'test_member_a'  # 环境环境，test/dev/pre/prod
+    env_name = 'test'  # 环境环境，test/dev/pre/prod
 
 
 class AssertConfig:
@@ -51,7 +47,25 @@ class TenantIdConfig:
     tenant_id = ''  # 租户ID
 
 
-class Config(RequestConfig, TemplateConfig, EncryptConfig, SignConfig, LoginConfig, EnvConfig, AssertConfig, LogConfig, TenantIdConfig):
+class Config(RequestConfig, TemplateConfig, EncryptConfig, SignConfig, EnvConfig, AssertConfig, LogConfig, TenantIdConfig):
+    def __init__(self):
+        super().__init__()
+        self.load_from_config_file()
+
+    def load_from_config_file(self):
+        config = parse_config('config.ini')
+        for section in config.sections():
+            for key, value in config.items(section):
+                if hasattr(self, key):
+                    attr_type = type(getattr(self, key))
+                    if attr_type == bool:
+                        value = config.getboolean(section, key)
+                    elif attr_type == int:
+                        value = config.getint(section, key)
+                    elif attr_type == float:
+                        value = config.getfloat(section, key)
+                    setattr(self, key, value)
+
     def set_attr(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)

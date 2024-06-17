@@ -9,6 +9,8 @@ from typing import Dict
 
 from pytestifyx.utils.json.core import json_update
 from pytestifyx.utils.logs.core import log
+from pytestifyx.utils.public.extract_url import extract_url, restore_url
+from pytestifyx.utils.public.parse_config import parse_config
 from pytestifyx.utils.requests.reload_all import reload_all
 from pytestifyx.utils.requests.requests_config import Config
 
@@ -71,13 +73,16 @@ class Context:
 class BaseRequest:
 
     def base(self, path, func_name, params, config: Config, **kwargs):
-        templates = self.base_init_module(path)
+        # 解析配置参数
+        api_config = parse_config('config.ini')
+
+        templates = self.base_init_module(path, api_module_name=api_config.get('api_module', 'api_module_name'))
 
         if 'delete_key' in params:
             config.delete_key = params['delete_key']
 
         # 解析模版参数
-        url, headers, data, query_params, templates = self.base_init_prepare_request(config, templates, func_name)
+        url, headers, data, query_params, templates = self.base_init_prepare_request(api_config, config, templates, func_name)
 
         # 创建一个新的 Context 实例
         context = Context(headers, data, url, query_params)
@@ -97,24 +102,25 @@ class BaseRequest:
             all_hooks_results[hook_name] = result
         return all_hooks_results['SendRequestHook'].response
 
-    def base_init_module(self, path: str) -> dict:
-        import_path = path.split('api_test')[1].split('core.py')[0]
-        templates = {module: self.import_template(import_path, module) for module in MODULES}
+    def base_init_module(self, path: str, api_module_name='api_test') -> dict:
+        import_path = path.split(api_module_name)[1].split('core.py')[0]
+        templates = {module: self.import_template(import_path, module, api_module_name) for module in MODULES}
         return templates
 
-    def base_init_prepare_request(self, config, templates: dict, func_name: str):
-        url_prefix_ = get_template_value(templates['url'], 'url_prefix' + f'_{config.env_name}')
+    def base_init_prepare_request(self, api_config, config, templates: dict, func_name: str):
+        url_prefix = api_config.get('url_prefix', config.env_name)
         path = get_template_value(templates['url'], config.request_method.upper() + '_' + func_name)
-        url = url_prefix_ + path
-        headers = get_template_value(templates['headers'], func_name + '_headers')
+        url = url_prefix + path
+        custom_header = get_template_value(templates['headers'], func_name + '_headers')
+        headers = custom_header if custom_header else get_template_value(templates['headers'], 'headers')
         data = get_template_value(templates['body'], config.request_method.upper() + '_' + func_name)
         query_params = get_template_value(templates['body'], config.request_method.upper() + '_' + func_name + '_query_params')
         return url, copy.deepcopy(headers), copy.deepcopy(data), copy.deepcopy(query_params), templates
 
     @staticmethod
-    def import_template(path: str, module_name: str):
+    def import_template(path: str, module_name: str, api_module_name='api_test'):
         import_module_body = path.replace('\\', '.').replace('/', '.') + module_name
-        template_body = importlib.import_module(import_module_body, 'api_test')
+        template_body = importlib.import_module(import_module_body, api_module_name)
         return template_body
 
     @staticmethod
@@ -202,23 +208,26 @@ class GenerateParametersHook(Hook):
         if '_headers' in self.params:
             self.context.headers.update(self.params['_headers'])
 
-        if '_url' in self.params:
-            if hasattr(self.templates['url'], self.config.request_method.upper() + '_' + self.func_name + '_params'):
-                path_params = getattr(self.templates['url'], self.config.request_method.upper() + '_' + self.func_name + '_params')
-                for key in path_params.keys():
-                    if key in self.params['_url']:
-                        path_params[key] = self.params['_url'][key]
-                for param, value in path_params.items():
-                    self.context.url = self.context.url.replace('<' + param + '>', value)
-        for key, value in self.params.items():
-            if key in self.context.query_params:
-                self.context.query_params[key] = value
+        # 特殊处理url中的参数
+        pk_params = extract_url(self.context.url)
+        json_update(pk_params, self.params)
+        self.context.url = restore_url(self.context.url, pk_params)
+
+        # 处理请求参数query_params
+        json_update(self.context.query_params, self.params)
+
+        # 处理入参为list的情况
+        if isinstance(self.context.data, list):
+            self.context.data = {'_data_': self.context.data}
+
         # 处理请求头同名字段覆
         if self.config.is_cover_header:
             json_update(self.context.headers, self.context.data)  # 入参同名字段替换请求头
 
         json_update(self.context.data, self.params)
-
+        # 还原入参为list的情况
+        if isinstance(self.context.data, dict) and '_data_' in self.context.data:
+            self.context.data = self.context.data['_data_']
         return self.context
 
 
@@ -251,9 +260,12 @@ class SendRequestHook(Hook):
         return True
 
     def execute(self):
-        log.info(f'----------------请求地址为{self.context.url}')
+
         log.info(f'----------------请求头为{json.dumps(self.context.headers, indent=4, ensure_ascii=False)}')
         log.info(f'----------------请求参数为{json.dumps(self.context.query_params, indent=4, ensure_ascii=False)}')
+        req = requests.models.PreparedRequest()
+        req.prepare_url(self.context.url, self.context.query_params)
+        log.info(f'----------------请求地址为{req.url}')
         request_method = self.config.request_method.upper()
         log.info(f'----------------请求方式为{request_method}---------------')
 
@@ -275,35 +287,38 @@ class SendRequestHook(Hook):
         return Parameters(response)
 
     def make_request(self, request_method):
-        if self.config.is_request_log:
-            if self.config.is_request_log_json_dumps:
-                log.info('----------------请求体原始报文' + json.dumps(self.context.data, indent=4, ensure_ascii=False))
-            else:
-                log.info('----------------请求体原始报文' + self.context.data)
+        if self.func_name.startswith(FUNC_NAME_PREFIX):
+            self.func_name = self.func_name.replace(FUNC_NAME_PREFIX, '')
 
         if request_method in ['POST', 'PUT', 'GET']:
             if self.config.content_type.upper() == 'JSON':
                 self.context.headers['Content-Type'] = 'application/json'
-                self.context.data = json.dumps(self.context.data) if self.config.is_json_dumps else self.context.data
             elif self.config.content_type == 'multipart/form-data':  # 处理文件上传
                 m = MultipartEncoder(fields=self.context.data)
                 self.context.headers['Content-Type'] = m.content_type
                 self.context.data = m
             else:
                 raise Exception('暂不支持的Content-Type')
-        if self.func_name.startswith(FUNC_NAME_PREFIX):
-            self.func_name = self.func_name.replace(FUNC_NAME_PREFIX, '')
-        data = self.templates['body'].__getattribute__(request_method.upper() + '_' + self.func_name) if hasattr(self.templates['body'], request_method.upper() + '_' + self.func_name) else {}
-        if data is not None:
-            return self.session.request(request_method, self.context.url, headers=self.context.headers, params=self.context.query_params, data=self.context.data, timeout=30)
+        if self.context.data:
+            if request_method in ['GET', 'DELETE']:
+                return self.session.request(request_method, self.context.url, headers=self.context.headers, params=self.context.query_params, timeout=60)
+            else:
+                if self.config.is_request_log:
+                    log.info('----------------请求体原始报文' + json.dumps(self.context.data, indent=4, ensure_ascii=False))
+                if self.config.is_json_dumps and self.config.content_type.upper() == 'JSON':
+                    return self.session.request(request_method, self.context.url, headers=self.context.headers, params=self.context.query_params, json=self.context.data, timeout=60)
+                else:
+                    return self.session.request(request_method, self.context.url, headers=self.context.headers, params=self.context.query_params, data=self.context.data, timeout=60)
         else:
-            return self.session.request(request_method, self.context.url, headers=self.context.headers, params=self.context.query_params, timeout=30)
+            if self.config.is_request_log:
+                log.info('----------------请求体原始报文' + json.dumps(self.context.data, indent=4, ensure_ascii=False))
+            if self.config.is_json_dumps:
+                return self.session.request(request_method, self.context.url, headers=self.context.headers, params=self.context.query_params, json=self.context.data, timeout=60)
+            else:
+                return self.session.request(request_method, self.context.url, headers=self.context.headers, params=self.context.query_params, data=self.context.data, timeout=60)
 
     def handle_response(self, response):
         log.info(f'----------------接口的响应码：{response.status_code}')
         log.info('----------------接口的响应时间为：' + str(response.elapsed.total_seconds()))
         if self.config.is_response_log:
-            if self.config.is_request_log_json_dumps:
-                log.info('----------------返回报文' + json.dumps(response.json(), indent=4, ensure_ascii=False))
-            else:
-                log.info('----------------返回报文' + str(response.text))
+            log.info('----------------返回报文' + json.dumps(response.json(), indent=4, ensure_ascii=False))
