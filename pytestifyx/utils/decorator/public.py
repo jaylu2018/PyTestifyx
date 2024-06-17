@@ -1,11 +1,36 @@
+import functools
 import time
 import traceback
 import inspect
 from datetime import datetime
 from functools import wraps
-from typing import Generator
 
 from pytestifyx.utils.logs.core import log
+
+
+def retry(max_attempts=5, delay=1):
+    """
+    装饰器，用于在函数执行失败时自动重试。
+    max_attempts: 最大重试次数。
+    delay: 每次重试之间的延迟（秒）。
+    """
+
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            attempts = 0
+            while attempts < max_attempts:
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    attempts += 1
+                    print(f"异常：{e}，正在尝试第 {attempts} 次重试...")
+                    time.sleep(delay)
+            return None
+
+        return wrapper
+
+    return decorator
 
 
 def run_time_locate(func):
@@ -102,16 +127,5 @@ def type_assert(fn):
                 raise TypeError("you must input {}".format(params[k].annotation))
         cc = fn(*args, **kwargs)
         return cc
-
-    return wrapper
-
-
-def assert_response(func):
-    def wrapper(self, *args, **kwargs):
-        response = func(self, *args, **kwargs)
-        if not isinstance(response, Generator):
-            assert response.status_code == 200
-            # assert response.json()['ret_code'] == '0000'
-        return response
 
     return wrapper

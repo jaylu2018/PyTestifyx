@@ -1,5 +1,6 @@
 import inspect
-from pytestifyx.utils.public.parse_config import parse_config
+from pytestifyx.utils.parse.config import parse_yaml_config
+
 
 class RequestConfig:
     is_cover_header = True  # 同名字段是否覆盖原有请求头
@@ -53,18 +54,9 @@ class Config(RequestConfig, TemplateConfig, EncryptConfig, SignConfig, EnvConfig
         self.load_from_config_file()
 
     def load_from_config_file(self):
-        config = parse_config('config.ini')
-        for section in config.sections():
-            for key, value in config.items(section):
-                if hasattr(self, key):
-                    attr_type = type(getattr(self, key))
-                    if attr_type == bool:
-                        value = config.getboolean(section, key)
-                    elif attr_type == int:
-                        value = config.getint(section, key)
-                    elif attr_type == float:
-                        value = config.getfloat(section, key)
-                    setattr(self, key, value)
+        config = parse_yaml_config('config.yaml')['config']
+        for key, value in config.items():
+            setattr(self, key, value)
 
     def set_attr(self, **kwargs):
         for key, value in kwargs.items():

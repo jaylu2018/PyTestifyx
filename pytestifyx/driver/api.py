@@ -10,7 +10,7 @@ from typing import Dict
 from pytestifyx.utils.json.core import json_update
 from pytestifyx.utils.logs.core import log
 from pytestifyx.utils.public.extract_url import extract_url, restore_url
-from pytestifyx.utils.public.parse_config import parse_config
+from pytestifyx.utils.parse.config import parse_yaml_config
 from pytestifyx.utils.requests.reload_all import reload_all
 from pytestifyx.utils.requests.requests_config import Config
 
@@ -74,9 +74,9 @@ class BaseRequest:
 
     def base(self, path, func_name, params, config: Config, **kwargs):
         # 解析配置参数
-        api_config = parse_config('config.ini')
+        api_config = parse_yaml_config('config.yaml')
 
-        templates = self.base_init_module(path, api_module_name=api_config.get('api_module', 'api_module_name'))
+        templates = self.base_init_module(path, api_module_name=api_config['api_module']['api_module_name'])
 
         if 'delete_key' in params:
             config.delete_key = params['delete_key']
@@ -108,7 +108,7 @@ class BaseRequest:
         return templates
 
     def base_init_prepare_request(self, api_config, config, templates: dict, func_name: str):
-        url_prefix = api_config.get('url_prefix', config.env_name)
+        url_prefix = api_config['url_prefix'][config.env_name]
         path = get_template_value(templates['url'], config.request_method.upper() + '_' + func_name)
         url = url_prefix + path
         custom_header = get_template_value(templates['headers'], func_name + '_headers')
